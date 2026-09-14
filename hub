@@ -1,0 +1,361 @@
+-- Simple Aimbot + ESP
+-- Paste into your executor
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- Config
+local Config = {
+    Aimbot = {
+        Enabled = true,
+        Key = Enum.UserInputType.MouseButton2,
+        Smoothness = 0.15,
+        FOV = 150,
+        TargetPart = "Head", -- Head, HumanoidRootPart, Torso
+        TeamCheck = true,
+        WallCheck = false,
+        Prediction = false,
+        PredictionFactor = 0.165,
+        MaxDistance = 1000
+    },
+    ESP = {
+        Enabled = true,
+        Boxes = true,
+        Names = true,
+        HealthBar = true,
+        Tracers = false,
+        TeamCheck = true,
+        MaxDistance = 1000,
+        BoxColor = Color3.fromRGB(255, 0, 0),
+        NameColor = Color3.fromRGB(255, 255, 255),
+        HealthBarColor = Color3.fromRGB(0, 255, 0)
+    }
+}
+
+-- Storage
+local ESPObjects = {}
+local FOVCircle = nil
+local AimbotTarget = nil
+
+-- Utility Functions
+local function GetCharacter(player)
+    return player.Character
+end
+
+local function GetHumanoid(character)
+    return character:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetRootPart(character)
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHead(character)
+    return character:FindFirstChild("Head")
+end
+
+local function GetTargetPart(character)
+    if Config.Aimbot.TargetPart == "Random" then
+        local parts = {"Head", "HumanoidRootPart", "Torso"}
+        return character:FindFirstChild(parts[math.random(1, #parts)])
+    end
+    return character:FindFirstChild(Config.Aimbot.TargetPart) or character:FindFirstChild("Head")
+end
+
+local function IsTeammate(player)
+    if not Config.Aimbot.TeamCheck and not Config.ESP.TeamCheck then return false end
+    if not player.Team or not LocalPlayer.Team then return false end
+    return player.Team == LocalPlayer.Team
+end
+
+local function IsVisible(targetPart)
+    if not Config.Aimbot.WallCheck then return true end
+    local origin = Camera.CFrame.Position
+    local direction = (targetPart.Position - origin).Unit * (targetPart.Position - origin).Magnitude
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, targetPart.Parent}
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    local result = workspace:Raycast(origin, direction, raycastParams)
+    return result == nil
+end
+
+local function GetDistance(pos)
+    return (pos - Camera.CFrame.Position).Magnitude
+end
+
+local function WorldToScreen(pos)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(screenPos.X, screenPos.Y), onScreen, screenPos.Z
+end
+
+-- ESP Functions
+local function CreateESP(player)
+    if player == LocalPlayer then return end
+    
+    local esp = {
+        Box = Drawing.new("Square"),
+        BoxOutline = Drawing.new("Square"),
+        Name = Drawing.new("Text"),
+        HealthBar = Drawing.new("Square"),
+        HealthBarOutline = Drawing.new("Square"),
+        Tracer = Drawing.new("Line")
+    }
+    
+    esp.Box.Visible = false
+    esp.Box.Thickness = 1
+    esp.Box.Filled = false
+    esp.Box.Color = Config.ESP.BoxColor
+    
+    esp.BoxOutline.Visible = false
+    esp.BoxOutline.Thickness = 3
+    esp.BoxOutline.Filled = false
+    esp.BoxOutline.Color = Color3.fromRGB(0, 0, 0)
+    
+    esp.Name.Visible = false
+    esp.Name.Size = 14
+    esp.Name.Center = true
+    esp.Name.Outline = true
+    esp.Name.Color = Config.ESP.NameColor
+    
+    esp.HealthBar.Visible = false
+    esp.HealthBar.Thickness = 1
+    esp.HealthBar.Filled = true
+    
+    esp.HealthBarOutline.Visible = false
+    esp.HealthBarOutline.Thickness = 3
+    esp.HealthBarOutline.Filled = false
+    esp.HealthBarOutline.Color = Color3.fromRGB(0, 0, 0)
+    
+    esp.Tracer.Visible = false
+    esp.Tracer.Thickness = 1
+    esp.Tracer.Color = Color3.fromRGB(255, 255, 255)
+    
+    ESPObjects[player] = esp
+end
+
+local function RemoveESP(player)
+    if ESPObjects[player] then
+        for _, drawing in pairs(ESPObjects[player]) do
+            drawing:Remove()
+        end
+        ESPObjects[player] = nil
+    end
+end
+
+local function UpdateESP()
+    for player, esp in pairs(ESPObjects) do
+        local character = GetCharacter(player)
+        local humanoid = character and GetHumanoid(character)
+        local rootPart = character and GetRootPart(character)
+        
+        if character and humanoid and rootPart and humanoid.Health > 0 then
+            local distance = GetDistance(rootPart.Position)
+            
+            if distance <= Config.ESP.MaxDistance and not IsTeammate(player) then
+                local pos, onScreen = WorldToScreen(rootPart.Position)
+                local head = GetHead(character)
+                local headPos = head and WorldToScreen(head.Position)
+                
+                if onScreen and headPos then
+                    local height = (pos.Y - headPos.Y) * 1.3
+                    local width = height / 2
+                    
+                    local boxPos = Vector2.new(pos.X - width / 2, headPos.Y - height * 0.1)
+                    local boxSize = Vector2.new(width, height)
+                    
+                    -- Box
+                    if Config.ESP.Boxes then
+                        esp.Box.Size = boxSize
+                        esp.Box.Position = boxPos
+                        esp.Box.Color = Config.ESP.BoxColor
+                        esp.Box.Visible = true
+                        
+                        esp.BoxOutline.Size = boxSize
+                        esp.BoxOutline.Position = boxPos
+                        esp.BoxOutline.Visible = true
+                    else
+                        esp.Box.Visible = false
+                        esp.BoxOutline.Visible = false
+                    end
+                    
+                    -- Name
+                    if Config.ESP.Names then
+                        esp.Name.Text = player.Name .. " [" .. math.floor(distance) .. "m]"
+                        esp.Name.Position = Vector2.new(pos.X, boxPos.Y - 16)
+                        esp.Name.Color = Config.ESP.NameColor
+                        esp.Name.Visible = true
+                    else
+                        esp.Name.Visible = false
+                    end
+                    
+                    -- Health Bar
+                    if Config.ESP.HealthBar then
+                        local healthPercent = humanoid.Health / humanoid.MaxHealth
+                        local barHeight = height * healthPercent
+                        
+                        esp.HealthBar.Size = Vector2.new(4, -barHeight)
+                        esp.HealthBar.Position = Vector2.new(boxPos.X - 8, boxPos.Y + height)
+                        esp.HealthBar.Color = Color3.fromRGB(255 * (1 - healthPercent), 255 * healthPercent, 0)
+                        esp.HealthBar.Visible = true
+                        
+                        esp.HealthBarOutline.Size = Vector2.new(4, -height)
+                        esp.HealthBarOutline.Position = Vector2.new(boxPos.X - 8, boxPos.Y + height)
+                        esp.HealthBarOutline.Visible = true
+                    else
+                        esp.HealthBar.Visible = false
+                        esp.HealthBarOutline.Visible = false
+                    end
+                    
+                    -- Tracer
+                    if Config.ESP.Tracers then
+                        esp.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+                        esp.Tracer.To = pos
+                        esp.Tracer.Visible = true
+                    else
+                        esp.Tracer.Visible = false
+                    end
+                else
+                    for _, drawing in pairs(esp) do
+                        drawing.Visible = false
+                    end
+                end
+            else
+                for _, drawing in pairs(esp) do
+                    drawing.Visible = false
+                end
+            end
+        else
+            for _, drawing in pairs(esp) do
+                drawing.Visible = false
+            end
+        end
+    end
+end
+
+-- Aimbot Functions
+local function GetClosestPlayer()
+    local closest = nil
+    local shortestDistance = Config.Aimbot.FOV
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local character = GetCharacter(player)
+            local humanoid = character and GetHumanoid(character)
+            local targetPart = character and GetTargetPart(character)
+            
+            if humanoid and humanoid.Health > 0 and targetPart then
+                if not IsTeammate(player) and IsVisible(targetPart) then
+                    local distance = GetDistance(targetPart.Position)
+                    
+                    if distance <= Config.Aimbot.MaxDistance then
+                        local screenPos, onScreen = WorldToScreen(targetPart.Position)
+                        
+                        if onScreen then
+                            local mousePos = UserInputService:GetMouseLocation()
+                            local distFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                            
+                            if distFromMouse < shortestDistance then
+                                shortestDistance = distFromMouse
+                                closest = targetPart
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return closest
+end
+
+local function AimAt(target)
+    if not target then return end
+    
+    local targetPos = target.Position
+    
+    -- Prediction
+    if Config.Aimbot.Prediction then
+        local velocity = target.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+        targetPos = targetPos + (velocity * Config.Aimbot.PredictionFactor)
+    end
+    
+    local cameraCF = Camera.CFrame
+    local targetCF = CFrame.new(cameraCF.Position, targetPos)
+    
+    -- Smoothing
+    Camera.CFrame = cameraCF:Lerp(targetCF, Config.Aimbot.Smoothness)
+end
+
+-- FOV Circle
+local function CreateFOVCircle()
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Thickness = 1
+    FOVCircle.NumSides = 64
+    FOVCircle.Radius = Config.Aimbot.FOV
+    FOVCircle.Filled = false
+    FOVCircle.Visible = true
+    FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+    FOVCircle.Transparency = 0.5
+end
+
+local function UpdateFOVCircle()
+    if FOVCircle then
+        FOVCircle.Position = UserInputService:GetMouseLocation()
+        FOVCircle.Radius = Config.Aimbot.FOV
+        FOVCircle.Visible = Config.Aimbot.Enabled
+    end
+end
+
+-- Input Handling
+local aiming = false
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Config.Aimbot.Key then
+        aiming = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Config.Aimbot.Key then
+        aiming = false
+    end
+end)
+
+-- Main Loop
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        CreateESP(player)
+    end
+end
+
+Players.PlayerAdded:Connect(CreateESP)
+Players.PlayerRemoving:Connect(RemoveESP)
+
+CreateFOVCircle()
+
+RunService.RenderStepped:Connect(function()
+    if Config.ESP.Enabled then
+        UpdateESP()
+    else
+        for _, esp in pairs(ESPObjects) do
+            for _, drawing in pairs(esp) do
+                drawing.Visible = false
+            end
+        end
+    end
+    
+    UpdateFOVCircle()
+    
+    if Config.Aimbot.Enabled and aiming then
+        local target = GetClosestPlayer()
+        if target then
+            AimAt(target)
+        end
+    end
+end)
+
+-- Notification
+print("Script Loaded | Hold Right Click to Aim")
